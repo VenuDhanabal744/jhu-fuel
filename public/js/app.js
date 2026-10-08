@@ -88,6 +88,8 @@ export async function render() {
     location.hash = '#/goals';
     return;
   }
+  // No tab bar until the profile is set up - there's nothing to navigate to yet.
+  document.body.classList.toggle('onboarding', !!state.status && !state.status.configured);
   renderNav(route);
   renderDateNav(route);
   const view = document.getElementById('view');

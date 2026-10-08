@@ -131,14 +131,16 @@ export async function render(ctx) {
       h('div', { class: 'form-grid' }, targetField, rateField),
       preview,
     ),
+    // Collapsed during first setup so the form stays short on a phone.
     h(
-      'div',
-      { class: 'card' },
-      h('div', { class: 'card-head' }, h('h2', null, 'Daily nutrient targets'), h('span', { class: 'small muted' }, 'Leave blank for auto')),
-      h('div', { class: 'small muted', style: { marginBottom: '8px' } }, 'Auto targets follow the Dietary Guidelines for Americans and NIH recommended intakes for your age and sex.'),
+      'details',
+      { class: 'card targets', open: !firstRun },
+      h('summary', { class: 'card-head', style: { cursor: 'pointer', marginBottom: 0 } }, h('h2', null, 'Daily nutrient targets'), h('span', { class: 'small muted' }, firstRun ? 'Optional — tap to customize' : 'Leave blank for auto')),
+      h('div', { class: 'small muted', style: { margin: '12px 0 8px' } }, 'Auto targets follow the Dietary Guidelines for Americans and NIH recommended intakes for your age and sex.'),
       h('div', { class: 'table-scroll' }, h('table', { class: 'data' }, h('thead', null, h('tr', null, h('th', null, 'Nutrient'), h('th', null, 'Type'), h('th', { class: 'num' }, 'Target'), h('th', null, 'Custom'))), targetsBody)),
     ),
-    h('button', { class: 'btn primary big block' }, firstRun ? 'Start tracking →' : 'Save goals'),
+    // Pinned to the bottom of the screen so it's always reachable.
+    h('div', { class: 'sticky-submit' }, h('button', { class: 'btn primary big block' }, firstRun ? 'Start tracking →' : 'Save goals')),
   );
 
   update();
