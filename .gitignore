@@ -1,0 +1,7 @@
+node_modules/
+data/
+public/data/
+jhu-fuel-backup.json
+.env
+.DS_Store
+.claude/

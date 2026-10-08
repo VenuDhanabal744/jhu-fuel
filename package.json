@@ -1,0 +1,17 @@
+{
+  "name": "jhu-calorie-tracker",
+  "version": "1.0.0",
+  "description": "Calorie & nutrient tracker built around the JHU dining menus",
+  "scripts": {
+    "start": "node scripts/serve.mjs",
+    "menus": "node scripts/build-menus.mjs && node scripts/build-embeddings.mjs",
+    "export-old-data": "node scripts/export-old-data.mjs"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=22.5"
+  },
+  "devDependencies": {
+    "@huggingface/transformers": "^4.3.1"
+  }
+}
