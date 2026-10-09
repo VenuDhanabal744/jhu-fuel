@@ -20,17 +20,18 @@ export async function render(ctx) {
     tabs.replaceChildren(
       seg(
         [
-          ['search', '🔍 Search'],
-          ['barcode', '📦 Barcode'],
-          ['label', '🏷️ Label'],
-          ['describe', '📝 Describe'],
-          ['custom', '✏️ Custom'],
-        ],
+          ['search', '🔍', 'Search'],
+          ['barcode', '📦', 'Barcode'],
+          ['label', '🏷️', 'Label'],
+          ['describe', '📝', 'Describe'],
+          ['custom', '✏️', 'Custom'],
+        ].map(([v, ico, label]) => [v, [h('span', { class: 'ico', 'aria-hidden': 'true' }, ico), label]]),
         tab,
         (v) => {
           tab = v;
           draw();
         },
+        'tabs',
       ),
     );
     const fn = { search: searchTab, barcode: barcodeTab, label: labelTab, describe: describeTab, custom: customTab }[tab];
@@ -46,7 +47,7 @@ export async function render(ctx) {
     h(
       'div',
       { class: 'stack' },
-      h('div', { class: 'row wrap spread' }, seg(MEALS, state.meal, (v) => (state.meal = v)), h('span', { class: 'small muted' }, 'Adding to this meal')),
+      seg(MEALS, state.meal, (v) => (state.meal = v), 'full'),
       tabs,
     ),
     panel,
@@ -134,9 +135,9 @@ function photoButtons(label, maxSide, onImage) {
   const lib = pick(null);
   return h(
     'div',
-    { class: 'row wrap' },
-    h('button', { type: 'button', class: 'btn primary big grow', onclick: () => cam.click() }, label),
-    h('button', { type: 'button', class: 'btn big', onclick: () => lib.click() }, '🖼 Choose photo'),
+    { class: 'stack' },
+    h('button', { type: 'button', class: 'btn primary big block', onclick: () => cam.click() }, label),
+    h('button', { type: 'button', class: 'btn block', onclick: () => lib.click() }, '🖼 Choose an existing photo'),
     cam,
     lib,
   );

@@ -57,22 +57,20 @@ function renderNav(route) {
 function renderDateNav(route) {
   const el = clear(document.getElementById('datenav'));
   if (!ROUTES[route].dated) return;
+  // The date input covers the label invisibly so tapping it opens the native picker (iOS
+  // won't open a picker from script).
   const picker = h('input', {
     type: 'date',
     value: state.date,
+    'aria-label': 'Pick a date',
     onchange: (e) => e.target.value && setDate(e.target.value),
   });
   el.append(
     h('button', { 'aria-label': 'Previous day', onclick: () => setDate(addDays(state.date, -1)) }, '‹'),
-    h(
-      'button',
-      { class: 'date-label', onclick: () => (picker.showPicker ? picker.showPicker() : picker.click()) },
-      fmtDate(state.date, 'relative'),
-    ),
-    picker,
+    h('span', { class: 'date-label' }, fmtDate(state.date, 'relative'), picker),
     h('button', { 'aria-label': 'Next day', onclick: () => setDate(addDays(state.date, 1)) }, '›'),
   );
-  if (state.date !== todayStr()) el.append(h('button', { class: 'small', onclick: () => setDate(todayStr()) }, 'Today'));
+  if (state.date !== todayStr()) el.append(h('button', { class: 'today-btn', onclick: () => setDate(todayStr()) }, 'Today'));
 }
 
 function setDate(date) {
@@ -130,6 +128,12 @@ async function boot() {
   setInterval(checkDay, 60_000);
   document.addEventListener('visibilitychange', () => document.visibilityState === 'visible' && checkDay());
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  // Hide the tab bar while the on-screen keyboard is up (touch devices only).
+  if (matchMedia('(pointer: coarse)').matches) {
+    const typing = (el) => el?.matches?.('input:not([type=checkbox]):not([type=file]):not([type=date]), textarea, select');
+    document.addEventListener('focusin', (e) => typing(e.target) && document.body.classList.add('keyboard'));
+    document.addEventListener('focusout', () => setTimeout(() => !typing(document.activeElement) && document.body.classList.remove('keyboard'), 50));
+  }
   render();
 }
 

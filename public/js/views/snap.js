@@ -22,7 +22,7 @@ async function watchRecognizer(el) {
       h(
         'div',
         { class: 'notice small' },
-        h('div', null, pct > 0 ? `⏳ Setting up the food recognizer — ${pct}%` : '⏳ Setting up the food recognizer…'),
+        h('div', null, pct >= 99 ? '⏳ Almost ready…' : pct > 0 ? `⏳ Setting up the food recognizer — ${pct}%` : '⏳ Setting up the food recognizer…'),
         h('div', { class: 'tiny muted', style: { margin: '4px 0 8px' } }, 'One-time ~90 MB download (use Wi-Fi). After that it works in about a second, even offline.'),
         h('div', { class: 'bar thin' }, h('i', { style: { width: `${pct}%` } })),
       ),
@@ -75,13 +75,13 @@ export async function render(ctx) {
     },
     h('span', { class: 'ico' }, '📸'),
     h('b', null, 'Take a photo of your plate'),
-    h('span', { class: 'small muted' }, 'Shoot from above with everything in frame. On a computer, drop an image here.'),
+    h('span', { class: 'small muted' }, 'Shoot from above with everything in frame.', h('span', { class: 'desktop-only' }, ' On a computer, drop an image here.')),
   );
 
   const controls = h(
     'div',
     { class: 'card stack' },
-    h('div', { class: 'field' }, h('span', null, 'Meal'), seg(MEALS, meal, (v) => ((meal = v), (state.meal = v)))),
+    h('div', { class: 'field' }, h('span', null, 'Meal'), seg(MEALS, meal, (v) => ((meal = v), (state.meal = v)), 'full')),
     h(
       'label',
       { class: 'field' },
@@ -104,7 +104,7 @@ export async function render(ctx) {
         { class: 'stack' },
         controls,
         drop,
-        h('div', { class: 'row' }, h('button', { class: 'btn grow', onclick: () => fileLib.click() }, '🖼 Choose from library'), h('button', { class: 'btn grow', onclick: () => ctx.go('add') }, '🔍 Search instead')),
+        h('div', { class: 'two-up' }, h('button', { class: 'btn', onclick: () => fileLib.click() }, '🖼 Choose from library'), h('button', { class: 'btn', onclick: () => ctx.go('add') }, '🔍 Search instead')),
       ),
     );
 

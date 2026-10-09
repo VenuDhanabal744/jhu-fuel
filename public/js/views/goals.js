@@ -1,7 +1,7 @@
 import { api } from '../api.js';
 import { h, seg, select, toast, todayStr, fmtDate } from '../ui.js';
 import { NUTRIENTS, fmt } from '../nutrients.js';
-import { computeTargets, ACTIVITY_LEVELS, GOALS } from '../targets.js';
+import { computeTargets, ACTIVITY_LEVELS } from '../targets.js';
 
 const RATES = [
   [0.25, '0.25 lb / week (gentle)'],
@@ -116,7 +116,7 @@ export async function render(ctx) {
         'div',
         { class: 'form-grid' },
         h('label', { class: 'field', style: { gridColumn: '1 / -1' } }, h('span', null, 'Name (optional)'), h('input', { class: 'input', value: p.name, oninput: (e) => (p.name = e.target.value) })),
-        h('div', { class: 'field' }, h('span', null, 'Sex (for BMR)'), seg([['female', 'Female'], ['male', 'Male']], p.sex, (v) => ((p.sex = v), update()))),
+        h('div', { class: 'field' }, h('span', null, 'Sex (for BMR)'), seg([['female', 'Female'], ['male', 'Male']], p.sex, (v) => ((p.sex = v), update()), 'full')),
         h('label', { class: 'field' }, h('span', null, 'Age'), numInput('age', { min: 13, max: 100 })),
         h('div', { class: 'field' }, h('span', null, 'Height'), h('div', { class: 'row' }, h('div', { class: 'input-suffix grow' }, ft, h('em', null, 'ft')), h('div', { class: 'input-suffix grow' }, inch, h('em', null, 'in')))),
         h('label', { class: 'field' }, h('span', null, 'Current weight (lb)'), numInput('weightLb', { min: 60, max: 600 })),
@@ -127,7 +127,7 @@ export async function render(ctx) {
       'div',
       { class: 'card stack' },
       h('h2', null, 'Your goal'),
-      seg(Object.entries(GOALS), p.goal, (v) => ((p.goal = v), update())),
+      seg([['lose', 'Lose weight'], ['maintain', 'Maintain'], ['gain', 'Gain']], p.goal, (v) => ((p.goal = v), update()), 'full'),
       h('div', { class: 'form-grid' }, targetField, rateField),
       preview,
     ),

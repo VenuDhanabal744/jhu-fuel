@@ -11,12 +11,6 @@ export const ACTIVITY_LEVELS = {
   athlete: { label: 'Athlete (2x/day training)', factor: 1.9 },
 };
 
-export const GOALS = {
-  lose: 'Lose weight',
-  maintain: 'Maintain weight',
-  gain: 'Gain weight / build muscle',
-};
-
 export const DEFAULT_PROFILE = {
   name: '',
   sex: 'female',

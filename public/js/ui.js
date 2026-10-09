@@ -102,8 +102,9 @@ export function select(options, value, onChange, attrs = {}) {
   );
 }
 
-export function seg(options, value, onChange) {
-  const wrap = h('div', { class: 'seg', role: 'tablist' });
+/** Segmented control. `variant`: '' (inline, scrolls if too wide) | 'full' (equal widths) | 'tabs' (icon over label). */
+export function seg(options, value, onChange, variant = '') {
+  const wrap = h('div', { class: `seg ${variant}`, role: 'tablist' });
   for (const [v, label] of options) {
     const btn = h('button', { type: 'button', class: v === value ? 'on' : '', role: 'tab', 'aria-selected': String(v === value) }, label);
     btn.addEventListener('click', () => {
