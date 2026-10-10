@@ -1,4 +1,7 @@
-// JHU dining menus, read from the static files published daily by scripts/build-menus.mjs.
+// JHU dining menus, read from the static files published daily by scripts/build-menus.mjs,
+// plus restaurants near campus (published weekly by scripts/build-restaurants.mjs).
+
+import { cleanNutrients } from './nutrients.js';
 
 const dayCache = new Map();
 let locationsPromise = null;
@@ -42,6 +45,7 @@ export async function getMenu(date, location, menu) {
 }
 
 export function servingText(serving) {
+  if (serving?.text) return serving.text;
   if (!serving?.amount) return '1 serving';
   const amt = +serving.amount;
   return `${Number.isFinite(amt) ? +amt.toFixed(2) : serving.amount} ${serving.unit ?? ''}`.trim();
@@ -49,6 +53,7 @@ export function servingText(serving) {
 
 /** Flattened, de-duplicated (per location+food) list of items for a date. */
 export async function flatItems(date, { location, meal } = {}) {
+  if (location?.startsWith('rest:')) return restaurantItems(location.slice(5));
   let menus = await getAllMenus(date);
   if (location && location !== 'any') menus = menus.filter((m) => m.location === location);
   if (meal && ['breakfast', 'lunch', 'dinner'].includes(meal)) {
@@ -84,4 +89,95 @@ export async function searchItems(date, query, limit = 60) {
     .sort((a, b) => b.score - a.score || a.it.name.localeCompare(b.it.name))
     .slice(0, limit)
     .map((r) => r.it);
+}
+
+// ---------- restaurants near campus (scripts/build-restaurants.mjs) ----------
+
+let placesPromise = null;
+let restaurantMenusPromise = null;
+
+export function getPlaces() {
+  placesPromise ??= fetch('restaurants/places.json')
+    .then((r) => (r.ok ? r.json() : { places: [] }))
+    .then((d) => d.places)
+    .catch(() => {
+      placesPromise = null;
+      return [];
+    });
+  return placesPromise;
+}
+
+export function getRestaurantMenus() {
+  restaurantMenusPromise ??= fetch('restaurants/menus.json')
+    .then((r) => (r.ok ? r.json() : {}))
+    .catch(() => {
+      restaurantMenusPromise = null;
+      return {};
+    });
+  return restaurantMenusPromise;
+}
+
+export async function getPlace(id) {
+  return (await getPlaces()).find((p) => p.id === id) ?? null;
+}
+
+/** A restaurant menu dish in the same shape as a JHU menu item. */
+function dishItem(dish, i, menuKey, menu, place) {
+  return {
+    foodId: `${menuKey}:${i}`,
+    name: dish.name,
+    description: '',
+    ingredients: '',
+    serving: { text: dish.serving },
+    hasNutrition: dish.nutrients.calories != null,
+    nutrients: cleanNutrients(dish.nutrients),
+    icons: [],
+    location: place ? `rest:${place.id}` : menuKey,
+    locationName: place?.name ?? menu.name,
+    menu: menuKey,
+    menuName: menu.name,
+    meal: 'all-day',
+    station: dish.section ?? 'Menu',
+    source: 'restaurant',
+    estimated: menu.kind === 'typical',
+  };
+}
+
+export async function restaurantItems(placeId) {
+  const [place, menus] = await Promise.all([getPlace(placeId), getRestaurantMenus()]);
+  const menu = place && menus[place.menu];
+  if (!menu) return [];
+  return menu.items.map((d, i) => dishItem(d, i, place.menu, menu, place));
+}
+
+/** Search every restaurant dish (chain menus + typical cuisine dishes). */
+export async function searchRestaurantDishes(query, limit = 20) {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  const terms = q.split(/\s+/);
+  const out = [];
+  for (const [key, menu] of Object.entries(await getRestaurantMenus())) {
+    menu.items.forEach((d, i) => {
+      const hay = `${d.name} ${menu.name}`.toLowerCase();
+      if (terms.every((t) => hay.includes(t))) out.push(dishItem(d, i, key, menu, null));
+    });
+  }
+  // Real chain items first, then typical dishes; shorter names (closer matches) first.
+  return out.sort((a, b) => a.estimated - b.estimated || a.name.length - b.name.length).slice(0, limit);
+}
+
+const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+/** "a big mac from mcdonalds" -> { place: nearest McDonald's, pattern: regex matching the name in the text }. */
+export async function findRestaurantInText(text) {
+  const t = norm(text);
+  const [places, menus] = await Promise.all([getPlaces(), getRestaurantMenus()]);
+  for (const [key, menu] of Object.entries(menus)) {
+    const n = norm(menu.name);
+    if (menu.kind !== 'chain' || !t.includes(n)) continue;
+    const place = places.find((p) => p.menu === key); // places are sorted by distance
+    // Letters of the name with anything (spaces, apostrophes) allowed between them.
+    if (place) return { place, pattern: new RegExp(`\\b(from |at )?${n.split('').join('[^a-z0-9]*')}\\b`, 'i') };
+  }
+  return null;
 }

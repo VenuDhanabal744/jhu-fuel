@@ -1,0 +1,38 @@
+# Refreshes the restaurant list (OpenStreetMap) and menus (USDA) once a week, commits
+# any changes, and redeploys the app.
+name: Update restaurants
+
+on:
+  schedule:
+    - cron: '41 8 * * 1' # Mondays, 4:41 AM Eastern (during daylight time)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build restaurant data
+        run: node scripts/build-restaurants.mjs
+      - name: Commit changes and redeploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if git diff --quiet -- public/restaurants; then
+            echo "No changes."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add public/restaurants
+          git commit -m "Update restaurants near campus"
+          git push
+          # Pushes made with the workflow token don't trigger other workflows, so start the deploy directly.
+          gh workflow run deploy.yml --ref main

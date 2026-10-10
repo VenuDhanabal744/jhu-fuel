@@ -54,6 +54,7 @@ export function sourceBadge(source) {
   if (source === 'menu') return h('span', { class: 'badge brand' }, '🏛 JHU menu');
   if (source === 'estimate') return h('span', { class: 'badge warn' }, '✨ AI estimate');
   if (source === 'packaged') return h('span', { class: 'badge' }, '📦 Packaged');
+  if (source === 'restaurant') return h('span', { class: 'badge brand' }, '🍽 Restaurant');
   return h('span', { class: 'badge' }, '✏️ Custom');
 }
 
@@ -93,6 +94,7 @@ export function openFoodSheet(food, { entry, meal, onDone } = {}) {
         h('div', { class: 'row wrap' }, sourceBadge(food.source), iconBadges(food.icons), food.serving ? h('span', { class: 'badge' }, `Serving: ${food.serving}`) : null),
         food.description ? h('div', { class: 'small muted' }, food.description) : null,
         allergens(food.icons),
+        food.estimated ? h('div', { class: 'notice small' }, '≈ Typical-dish estimate: USDA average nutrition for this kind of dish, not this restaurant’s own recipe. Adjust servings to match your portion.') : null,
         hasNutrition ? null : h('div', { class: 'notice warn' }, 'JHU Dining hasn’t published nutrition data for this item, so it will count as 0 calories. Consider adding a custom entry with an estimate instead.'),
         h(
           'div',
@@ -178,9 +180,10 @@ export function logFoods(foods, meal) {
 export function fromMenuItem(it) {
   return {
     name: it.name,
-    source: 'menu',
+    source: it.source ?? 'menu',
+    estimated: it.estimated ?? false,
     location: it.locationName,
-    station: `${it.menuName} · ${it.station}`,
+    station: it.station === 'Menu' ? it.menuName : `${it.menuName} · ${it.station}`,
     serving: servingText(it.serving),
     nutrients: it.nutrients,
     foodId: it.foodId,
@@ -203,6 +206,7 @@ export function fromSaved(row) {
 }
 
 export function servingText(serving) {
+  if (serving?.text) return serving.text;
   if (!serving?.amount) return '1 serving';
   const amt = +serving.amount;
   return `${Number.isFinite(amt) ? +amt.toFixed(2) : serving.amount} ${serving.unit ?? ''}`.trim();

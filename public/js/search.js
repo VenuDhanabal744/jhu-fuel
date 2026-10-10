@@ -8,6 +8,7 @@ export async function searchFoods(date, q, signal) {
   const res = await api(`/search?date=${date}&q=${encodeURIComponent(q)}`, { signal });
   return [
     ...res.menu.map((it) => ({ ...fromMenuItem(it), group: 'Today’s JHU menus' })),
+    ...(res.restaurants ?? []).map((it) => ({ ...fromMenuItem(it), group: 'Restaurant dishes' })),
     ...res.custom.map((f) => ({ ...fromSaved(f), source: 'custom', group: 'My foods' })),
     ...res.recent.map((f) => ({ ...fromSaved(f), group: 'Recently logged' })),
   ];

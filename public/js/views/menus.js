@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { h, seg, fmtDate, defaultMeal } from '../ui.js';
 import { openFoodSheet, fromMenuItem } from '../food.js';
 import { foodRow } from '../search.js';
+import { renderList as restaurantList, renderDetail as restaurantDetail } from './restaurants.js';
 
 const MEAL_ORDER = ['breakfast', 'lunch', 'dinner', 'late-night', 'all-day'];
 const DIET_FILTERS = [
@@ -19,10 +20,42 @@ function pickMenu(menus, preferredSlug) {
 }
 
 export async function render(ctx) {
+  const params = new URLSearchParams(location.hash.split('?')[1] ?? '');
+  const placeId = params.get('r');
+  let mode = params.get('mode') ?? (placeId ? 'restaurants' : null);
+  try {
+    mode ??= localStorage.getItem('menus.mode') ?? 'jhu';
+    localStorage.setItem('menus.mode', mode);
+  } catch {
+    mode ??= 'jhu';
+  }
+  const root = h('div', { class: 'stack' });
+  if (!placeId) {
+    root.append(
+      seg(
+        [
+          ['jhu', '🏛 JHU Dining'],
+          ['restaurants', '🍽 Restaurants'],
+        ],
+        mode,
+        (v) => (location.hash = `#/menus?mode=${v}`),
+        'full',
+      ),
+    );
+  }
+  if (mode === 'restaurants') {
+    root.append(await (placeId ? restaurantDetail(ctx, placeId) : restaurantList(ctx)));
+    return root;
+  }
+  root.append(await renderJhu(ctx));
+  return root;
+}
+
+async function renderJhu(ctx) {
   const { state } = ctx;
   const index = await api(`/menus?date=${state.date}`);
   const root = h('div');
-  root.append(h('h1', { class: 'page-title' }, `🏛 JHU Dining · ${fmtDate(state.date, 'relative')}`));
+  root.append(h('h1', { class: 'page-title' }, `JHU Dining · ${fmtDate(state.date, 'relative')}`));
 
   if (!index.length) {
     root.append(h('div', { class: 'empty' }, h('span', { class: 'ico' }, '🍽'), 'No menus published for this day yet. Menus usually appear a week or two ahead.'));

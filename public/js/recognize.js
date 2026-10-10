@@ -4,7 +4,7 @@
 // items instead of "any food", a small model is accurate enough. Several crops of the
 // photo are scored so multiple foods on one plate can be found.
 
-import { flatItems, servingText } from './menus.js';
+import { flatItems, servingText, findRestaurantInText } from './menus.js';
 import { cacheGet, cacheSet } from './store.js';
 
 const TRANSFORMERS_URL = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@4.3.1/+esm';
@@ -300,7 +300,8 @@ const LOCATION_HINTS = [
 function parseChunk(raw) {
   let text = raw.trim().toLowerCase().replace(/[.!?]+$/, '');
   let servings = 1;
-  const num = text.match(/^(\d+(?:\.\d+)?|\d+\/\d+)\s+/);
+  // A number followed by a size unit ("6 inch sub", "12 oz latte", "10 piece nuggets") is part of the item, not a count.
+  const num = text.match(/^(\d+(?:\.\d+)?|\d+\/\d+)(?!\s*(?:inch|in\b|"|oz\b|ounce|fl\b|piece|pc\b|pcs\b|count|ct\b))\s+/);
   if (num) {
     servings = num[1].includes('/') ? num[1].split('/').reduce((a, b) => a / b) : +num[1];
     text = text.slice(num[0].length);
@@ -321,13 +322,19 @@ function lexicalScore(query, name) {
   const n = name.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
   if (!q.size || !n.length) return 0;
   const hits = n.filter((w) => q.has(w) || q.has(w.replace(/s$/, '')) || q.has(`${w}s`)).length;
-  return hits / Math.max(n.length, q.size);
+  // Mostly "how many of the words you typed are in this dish's name", a little "how much of the name you typed".
+  return 0.7 * Math.min(1, hits / q.size) + 0.3 * (hits / n.length);
 }
 
 export async function analyzeText({ text, date, meal, location }) {
   let loc = location;
   let body = text;
-  for (const [re, slug] of LOCATION_HINTS) {
+  const chain = await findRestaurantInText(body);
+  if (chain) {
+    loc = `rest:${chain.place.id}`;
+    body = body.replace(chain.pattern, ' ');
+  }
+  for (const [re, slug] of chain ? [] : LOCATION_HINTS) {
     if (re.test(body)) {
       loc = slug;
       body = body.replace(re, ' ');
@@ -337,7 +344,8 @@ export async function analyzeText({ text, date, meal, location }) {
   body = body.replace(/\b(from|at|in) the\b|\b(from|at)\b(?=\s*$)/gi, ' ');
   const { items, names, groups } = await candidateGroups(date, meal, loc);
   const chunks = body
-    .split(/,|;|\n|\+|&|\band\b|\bwith\b|\bplus\b|\balso\b/i)
+    // At a chain, "with" is usually part of an item name ("McFlurry with Oreo"); elsewhere it joins two foods.
+    .split(chain ? /,|;|\n|\+|&|\band\b|\bplus\b|\balso\b/i : /,|;|\n|\+|&|\band\b|\bwith\b|\bplus\b|\balso\b/i)
     .map(parseChunk)
     .filter((c) => c.text.length > 1);
   if (!names.length || !chunks.length) {
@@ -348,7 +356,7 @@ export async function analyzeText({ text, date, meal, location }) {
   const chunkVecs = await embedTexts(chunks.map((c) => prompt(c.text)));
   const results = chunks.map((c, i) => {
     const scored = names
-      .map((name, j) => ({ name, score: dot(chunkVecs[i], nameVecs[j]) + 0.25 * lexicalScore(c.text, name) }))
+      .map((name, j) => ({ name, score: dot(chunkVecs[i], nameVecs[j]) + 0.35 * lexicalScore(c.text, name) }))
       .sort((a, b) => b.score - a.score);
     const margin = scored[0].score - (scored[1]?.score ?? 0);
     return { chunk: c, scored, conf: margin > 0.05 ? 'high' : margin > 0.02 ? 'medium' : 'low' };

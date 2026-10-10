@@ -2,6 +2,7 @@ import { api } from '../api.js';
 import { h, seg, select, toast, MEALS, fmtDate, todayStr } from '../ui.js';
 import { renderReview } from '../review.js';
 import { prepareImage } from '../image.js';
+import { openRestaurantPicker } from './restaurants.js';
 
 let locationsCache = null;
 
@@ -44,7 +45,7 @@ export async function render(ctx) {
     'div',
     null,
     h('h1', { class: 'page-title' }, '📷 Snap your plate'),
-    h('p', { class: 'muted small', style: { marginTop: '-8px' } }, `Your photo is matched against what JHU dining is serving ${state.date === todayStr() ? 'today' : `on ${fmtDate(state.date)}`}, so you get the menu’s real nutrition data. Runs free, right on your phone — no AI subscription.`),
+    h('p', { class: 'muted small', style: { marginTop: '-8px' } }, `Your photo is matched against the menu where you’re eating — JHU dining ${state.date === todayStr() ? 'today' : `on ${fmtDate(state.date)}`}, or any restaurant within 10 miles. Runs free, right on your phone.`),
   );
 
   const loadingNotice = h('div');
@@ -78,23 +79,37 @@ export async function render(ctx) {
     h('span', { class: 'small muted' }, 'Shoot from above with everything in frame.', h('span', { class: 'desktop-only' }, ' On a computer, drop an image here.')),
   );
 
+  // JHU dining halls, plus any restaurant within 10 miles (picked from a searchable list).
+  const whereSlot = h('div');
+  const setWhere = (value, restaurantName) => {
+    location = value;
+    localStorage.setItem('snap.location', value);
+    if (restaurantName) localStorage.setItem('snap.locationName', restaurantName);
+    drawWhere();
+  };
+  function drawWhere() {
+    const restaurantName = localStorage.getItem('snap.locationName');
+    const options = [
+      ['any', 'Not sure — check every dining hall'],
+      ...locationsCache.map((l) => [l.slug, l.name]),
+      ...(location.startsWith('rest:') ? [[location, `🍽 ${restaurantName ?? 'Restaurant'}`]] : []),
+      ['__pick', '🍽 At a restaurant…'],
+    ];
+    whereSlot.replaceChildren(
+      select(options, location, (v) => {
+        if (v !== '__pick') return setWhere(v);
+        drawWhere(); // put the old choice back until one is picked
+        openRestaurantPicker((place) => setWhere(`rest:${place.id}`, place.name));
+      }),
+    );
+  }
+  drawWhere();
+
   const controls = h(
     'div',
     { class: 'card stack' },
     h('div', { class: 'field' }, h('span', null, 'Meal'), seg(MEALS, meal, (v) => ((meal = v), (state.meal = v)), 'full')),
-    h(
-      'label',
-      { class: 'field' },
-      h('span', null, 'Where are you eating? (picking one makes matches more accurate)'),
-      select(
-        [['any', 'Not sure — check every dining hall'], ...locationsCache.map((l) => [l.slug, l.name])],
-        location,
-        (v) => {
-          location = v;
-          localStorage.setItem('snap.location', v);
-        },
-      ),
-    ),
+    h('label', { class: 'field' }, h('span', null, 'Where are you eating? (picking one makes matches more accurate)'), whereSlot),
   );
 
   const startScreen = () =>

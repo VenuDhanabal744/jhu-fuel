@@ -207,7 +207,7 @@ function quickAdd(ctx) {
 
 function entryThumb(e) {
   if (e.photo_url) return h('img', { class: 'thumb', src: e.photo_url, alt: '', loading: 'lazy' });
-  return h('div', { class: 'thumb', 'aria-hidden': 'true' }, ({ menu: '🏛', estimate: '✨', packaged: '📦' })[e.source] ?? '✏️');
+  return h('div', { class: 'thumb', 'aria-hidden': 'true' }, ({ menu: '🏛', estimate: '✨', packaged: '📦', restaurant: '🍽' })[e.source] ?? '✏️');
 }
 
 function mealBlock(ctx, meal, label, entries, rerender) {

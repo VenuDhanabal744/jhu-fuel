@@ -24,6 +24,11 @@ for (const f of fs.readdirSync(path.join(OUT, 'menus'))) {
     for (const st of menu.stations) for (const it of st.items) names.add(it.name);
   }
 }
+// Restaurant dishes too, so plate photos can be matched at restaurants.
+const restaurantMenus = path.join(root, 'public', 'restaurants', 'menus.json');
+if (fs.existsSync(restaurantMenus)) {
+  for (const menu of Object.values(JSON.parse(fs.readFileSync(restaurantMenus)))) for (const it of menu.items) names.add(it.name);
+}
 const list = [...names].sort();
 
 const tokenizer = await AutoTokenizer.from_pretrained(MODEL_ID);

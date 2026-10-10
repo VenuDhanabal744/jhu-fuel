@@ -10,7 +10,7 @@ import { thumbnail } from './image.js';
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const MEALS = ['breakfast', 'lunch', 'dinner', 'snack'];
-const SOURCES = ['menu', 'estimate', 'custom', 'packaged'];
+const SOURCES = ['menu', 'estimate', 'custom', 'packaged', 'restaurant'];
 
 class ApiError extends Error {}
 const fail = (message) => {
@@ -259,11 +259,18 @@ const routes = [
     const lower = text.toLowerCase();
     return {
       menu: await menus.searchItems(requireDate(q.get('date')), text),
+      restaurants: await menus.searchRestaurantDishes(text),
       custom: (await listFoods()).filter((f) => f.name.toLowerCase().includes(lower)),
       recent: (await recentFoods(100)).filter((f) => f.name.toLowerCase().includes(lower)).slice(0, 15),
     };
   }],
   ['POST', /^\/analyze$/, (_m, _q, body) => analyze(body ?? {})],
+  ['GET', /^\/restaurants$/, () => menus.getPlaces()],
+  ['GET', /^\/restaurants\/([nwr]\d+)$/, async ([, id]) => {
+    const place = (await menus.getPlace(id)) ?? fail('Restaurant not found');
+    const menu = (await menus.getRestaurantMenus())[place.menu] ?? null;
+    return { place, menu: menu && { name: menu.name, kind: menu.kind, source: menu.source }, items: await menus.restaurantItems(id) };
+  }],
   ['GET', /^\/entries$/, (_m, q) => listEntries(requireDate(q.get('date')))],
   ['POST', /^\/entries$/, (_m, _q, body) => addEntries(Array.isArray(body) ? body : [body])],
   ['PATCH', /^\/entries\/(\d+)$/, ([, id], _q, body) => updateEntry(+id, body ?? {})],
