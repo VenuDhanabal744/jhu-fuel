@@ -1,3 +1,5 @@
+import { prepareImage } from './image.js';
+
 // Tiny DOM helpers - no framework.
 
 export function h(tag, attrs, ...children) {
@@ -39,6 +41,54 @@ function append(el, children) {
 export function clear(el) {
   while (el.firstChild) el.firstChild.remove();
   return el;
+}
+
+/**
+ * Photo picker pair: camera + library. Calls onImage(dataUrl).
+ * `compact` puts both on one row as plain buttons (when they're a secondary option).
+ */
+export function photoButtons(label, maxSide, onImage, { compact = false } = {}) {
+  const pick = (capture) =>
+    h('input', {
+      type: 'file',
+      accept: 'image/*',
+      capture,
+      class: 'hidden',
+      onchange: async (e) => {
+        const file = e.target.files[0];
+        e.target.value = '';
+        if (!file) return;
+        try {
+          onImage(await prepareImage(file, maxSide));
+        } catch {
+          toast('Couldn’t read that image. Try a JPEG or PNG.', 'error');
+        }
+      },
+    });
+  const cam = pick('environment');
+  const lib = pick(null);
+  if (compact) {
+    return h(
+      'div',
+      { class: 'row' },
+      h('button', { type: 'button', class: 'btn grow', onclick: () => cam.click() }, label),
+      h('button', { type: 'button', class: 'btn grow', onclick: () => lib.click() }, '🖼 From photos'),
+      cam,
+      lib,
+    );
+  }
+  return h(
+    'div',
+    { class: 'stack' },
+    h('button', { type: 'button', class: 'btn primary big block', onclick: () => cam.click() }, label),
+    h('button', { type: 'button', class: 'btn block', onclick: () => lib.click() }, '🖼 Choose an existing photo'),
+    cam,
+    lib,
+  );
+}
+
+export function busy(text) {
+  return h('div', { class: 'card row', style: { justifyContent: 'center', color: 'var(--text-2)' } }, h('span', { class: 'spinner' }), text);
 }
 
 export function toast(message, type = 'info') {

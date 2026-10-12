@@ -139,7 +139,9 @@ function dishItem(dish, i, menuKey, menu, place) {
     meal: 'all-day',
     station: dish.section ?? 'Menu',
     source: 'restaurant',
-    estimated: menu.kind === 'typical',
+    // Only the chains' numbers come from the restaurant's own food; the rest are USDA estimates.
+    estimated: menu.kind !== 'chain',
+    menuKind: menu.kind,
   };
 }
 
@@ -162,22 +164,32 @@ export async function searchRestaurantDishes(query, limit = 20) {
       if (terms.every((t) => hay.includes(t))) out.push(dishItem(d, i, key, menu, null));
     });
   }
-  // Real chain items first, then typical dishes; shorter names (closer matches) first.
-  return out.sort((a, b) => a.estimated - b.estimated || a.name.length - b.name.length).slice(0, limit);
+  // Real chain items first, then campus cafés, then typical dishes; shorter names (closer matches) first.
+  const rank = { chain: 0, campus: 1 };
+  return out.sort((a, b) => (rank[a.menuKind] ?? 2) - (rank[b.menuKind] ?? 2) || a.name.length - b.name.length).slice(0, limit);
 }
 
-const norm = (s) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
+const norm = (s) => s.toLowerCase().normalize('NFD').replace(/[^a-z0-9]/g, '');
+
+// Letters of the name with anything (spaces, apostrophes) allowed between them.
+const namePattern = (n) => new RegExp(`\\b(from |at )?${n.split('').join('[^a-z0-9]*')}\\b`, 'i');
 
 /** "a big mac from mcdonalds" -> { place: nearest McDonald's, pattern: regex matching the name in the text }. */
 export async function findRestaurantInText(text) {
   const t = norm(text);
   const [places, menus] = await Promise.all([getPlaces(), getRestaurantMenus()]);
+  // Campus cafés first ("from connie's", "at brody"), longest names first so "Kitschenette" beats "Kitsch".
+  const campusNames = places
+    .filter((p) => p.campus && p.menu.startsWith('campus:'))
+    .flatMap((p) => [p.name, ...(p.aliases ?? [])].map((name) => [norm(name), p]))
+    .filter(([n]) => n.length >= 4)
+    .sort(([a], [b]) => b.length - a.length);
+  for (const [n, place] of campusNames) if (t.includes(n)) return { place, pattern: namePattern(n) };
   for (const [key, menu] of Object.entries(menus)) {
     const n = norm(menu.name);
     if (menu.kind !== 'chain' || !t.includes(n)) continue;
     const place = places.find((p) => p.menu === key); // places are sorted by distance
-    // Letters of the name with anything (spaces, apostrophes) allowed between them.
-    if (place) return { place, pattern: new RegExp(`\\b(from |at )?${n.split('').join('[^a-z0-9]*')}\\b`, 'i') };
+    if (place) return { place, pattern: namePattern(n) };
   }
   return null;
 }

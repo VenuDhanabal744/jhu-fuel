@@ -1,5 +1,5 @@
-// Restaurants within 10 miles of campus (OpenStreetMap) with chain menus or typical
-// cuisine dishes (USDA). Rendered inside the Menus tab.
+// Campus cafés and restaurants within 10 miles of campus (OpenStreetMap) with chain menus,
+// campus cafés' own dishes or typical cuisine dishes (USDA). Rendered inside the Menus tab.
 
 import { api } from '../api.js';
 import { h, openSheet, toast } from '../ui.js';
@@ -8,6 +8,7 @@ import { foodRow } from '../search.js';
 
 const CATEGORIES = [
   ['all', 'All'],
+  ['campus', '🎓 On campus'],
   ['real', '✅ Real menus'],
   ['pizza', '🍕 Pizza'],
   ['burger', '🍔 Burgers'],
@@ -30,12 +31,14 @@ const CATEGORIES = [
 const CATEGORY_GROUPS = {
   asian: ['thai', 'vietnamese', 'korean'],
   mexican: ['mexican', 'peruvian', 'caribbean'],
-  american: ['american', 'barbecue', 'wings', 'hot_dog', 'salad', 'jhu'],
+  american: ['american', 'barbecue', 'wings', 'hot_dog', 'salad'],
   bakery: ['donut', 'bagel', 'bakery', 'pretzel'],
   dessert: ['ice_cream'],
   drinks: ['smoothie', 'bubble_tea'],
 };
 const PAGE = 40;
+// The "On campus" list is grouped by building, in this order.
+const BUILDINGS = ['Bloomberg Student Center', 'Brody Learning Commons', 'JHU Dining', 'Scott-Bates Commons', 'Mudd Hall', 'Homewood campus', 'Peabody Institute'];
 
 // Remembered while the app is open, so going back from a restaurant keeps your place.
 const ui = { query: '', category: 'all', shown: PAGE, origin: null };
@@ -53,34 +56,44 @@ const fmtMiles = (mi) => (mi < 0.1 ? `${Math.round(mi * 5280)} ft` : `${mi < 10 
 const titleCase = (s) => s.replace(/\b\w/g, (c) => c.toUpperCase());
 
 function describe(p) {
+  if (p.campus) return p.building ?? 'JHU Dining';
   const cuisine = p.cuisine.length ? p.cuisine.slice(0, 2).map(titleCase).join(', ') : { cafe: 'Café', ice_cream: 'Ice cream', fast_food: 'Fast food', restaurant: 'Restaurant', food_court: 'Food court' }[p.kind];
   return cuisine;
 }
 
 function matches(p, q, category) {
   if (category === 'real' && !p.menu.startsWith('chain:') && p.menu !== 'jhu') return false;
-  if (category !== 'all' && category !== 'real' && !(CATEGORY_GROUPS[category] ?? [category]).includes(p.cat)) return false;
+  if (category === 'campus' && !p.campus) return false;
+  if (!['all', 'real', 'campus'].includes(category) && !(CATEGORY_GROUPS[category] ?? [category]).includes(p.cat)) return false;
   if (!q) return true;
-  return `${p.name} ${p.cuisine.join(' ')} ${p.address ?? ''}`.toLowerCase().includes(q);
+  return `${p.name} ${p.cuisine.join(' ')} ${p.address ?? ''} ${p.building ?? ''} ${p.about ?? ''} ${(p.aliases ?? []).join(' ')}`.toLowerCase().includes(q);
 }
 
-function placeRow(p, onPick) {
+function placeRow(p, onPick, { grouped = false } = {}) {
   const real = p.menu.startsWith('chain:') || p.menu === 'jhu';
+  const badge = p.menu === 'jhu' ? 'JHU menu' : real ? '✅ Real menu' : p.campus && !grouped ? '🎓 Campus' : null;
+  // Distance from campus means nothing for a campus café; from you it does (unless the pin is approximate).
+  const showDistance = ui.origin ? !p.approx : !p.campus;
   return h(
     'div',
     { class: 'food-row', role: 'button', tabindex: 0, onclick: () => onPick(p), onkeydown: (e) => e.key === 'Enter' && onPick(p) },
     h(
       'div',
       { class: 'grow' },
-      h('div', { class: 'name' }, p.name, ' ', real ? h('span', { class: 'badge good' }, p.menu === 'jhu' ? 'JHU menu' : '✅ Real menu') : null),
-      h('div', { class: 'meta ellipsis' }, [describe(p), p.address].filter(Boolean).join(' · ')),
+      h('div', { class: 'name' }, p.name, ' ', badge ? h('span', { class: `badge ${real ? 'good' : 'brand'}` }, badge) : null),
+      h('div', { class: 'meta ellipsis' }, (p.campus ? [grouped ? null : describe(p), p.about ?? (p.menu === 'jhu' ? 'Daily menu with nutrition' : null)] : [describe(p), p.address]).filter(Boolean).join(' · ')),
     ),
-    h('div', { class: 'kcal' }, fmtMiles(distanceOf(p)), h('small', null, ui.origin ? 'from you' : 'from campus')),
+    showDistance ? h('div', { class: 'kcal' }, fmtMiles(distanceOf(p)), h('small', null, ui.origin ? 'from you' : 'from campus')) : null,
   );
 }
 
 export async function renderList() {
   const places = await api('/restaurants');
+  const linked = new URLSearchParams(location.hash.split('?')[1] ?? '').get('cat');
+  if (CATEGORIES.some(([key]) => key === linked)) {
+    ui.category = linked;
+    ui.shown = PAGE;
+  }
   const list = h('div');
   const count = h('div', { class: 'small muted', style: { margin: '10px 2px 8px' } });
   const nearBtn = h('button', { class: `chip ${ui.origin ? 'on' : ''}`, onclick: () => toggleNearMe() }, ui.origin ? '📍 Near me' : '📍 Sort by near me');
@@ -89,13 +102,32 @@ export async function renderList() {
     const q = ui.query.trim().toLowerCase();
     const found = places.filter((p) => matches(p, q, ui.category));
     if (ui.origin) found.sort((a, b) => distanceOf(a) - distanceOf(b));
-    count.textContent = `${found.length.toLocaleString()} place${found.length === 1 ? '' : 's'} within 10 miles of campus`;
+    count.textContent = ui.category === 'campus' ? `${found.length} places to eat on campus` : `${found.length.toLocaleString()} place${found.length === 1 ? '' : 's'} within 10 miles of campus`;
+    const open = (pl) => (location.hash = `#/menus?r=${pl.id}`);
+    if (ui.category === 'campus' && found.length) {
+      const groups = new Map();
+      for (const p of found) {
+        const b = describe(p);
+        if (!groups.has(b)) groups.set(b, []);
+        groups.get(b).push(p);
+      }
+      const rank = (b) => (BUILDINGS.includes(b) ? BUILDINGS.indexOf(b) : BUILDINGS.length);
+      list.replaceChildren(
+        ...[...groups]
+          .sort(([a], [b]) => (ui.origin ? 0 : rank(a) - rank(b)))
+          .flatMap(([building, ps]) => [
+            h('h3', { class: 'group-label' }, building === 'JHU Dining' ? 'Levering Hall' : building),
+            h('div', { class: 'card', style: { padding: 0, overflow: 'hidden' } }, ps.map((p) => placeRow(p, open, { grouped: true }))),
+          ]),
+      );
+      return;
+    }
     list.replaceChildren(
       found.length
         ? h(
             'div',
             { class: 'card', style: { padding: 0, overflow: 'hidden' } },
-            found.slice(0, ui.shown).map((p) => placeRow(p, (pl) => (location.hash = `#/menus?r=${pl.id}`))),
+            found.slice(0, ui.shown).map((p) => placeRow(p, open)),
           )
         : h('div', { class: 'empty small' }, 'No restaurants match.'),
       found.length > ui.shown
@@ -177,17 +209,22 @@ export async function renderDetail(ctx, id) {
   const root = h(
     'div',
     { class: 'stack' },
-    h('button', { class: 'btn ghost small', onclick: () => (location.hash = '#/menus?mode=restaurants') }, '‹ All restaurants'),
+    h('button', { class: 'btn ghost small', onclick: () => (location.hash = p.campus ? '#/menus?mode=restaurants&cat=campus' : '#/menus?mode=restaurants') }, p.campus ? '‹ Campus cafés' : '‹ All restaurants'),
     h(
       'div',
       { class: 'card stack' },
-      h('div', null, h('h1', { class: 'page-title', style: { margin: 0 } }, p.name), h('div', { class: 'muted small' }, [describe(p), `${fmtMiles(distanceOf(p))} ${ui.origin ? 'from you' : 'from campus'}`].join(' · '))),
+      h(
+        'div',
+        null,
+        h('h1', { class: 'page-title', style: { margin: 0 } }, p.name),
+        h('div', { class: 'muted small' }, (p.campus ? [p.about] : [describe(p), `${fmtMiles(distanceOf(p))} ${ui.origin ? 'from you' : 'from campus'}`]).filter(Boolean).join(' · ')),
+      ),
       p.address ? h('div', { class: 'small' }, '📍 ', p.address) : null,
       p.hours ? h('div', { class: 'small' }, '🕒 ', p.hours.replace(/;\s*/g, ' · ')) : null,
       h(
         'div',
         { class: 'row wrap' },
-        h('a', { class: 'btn small', href: maps, target: '_blank', rel: 'noopener' }, '🧭 Directions'),
+        p.approx ? null : h('a', { class: 'btn small', href: maps, target: '_blank', rel: 'noopener' }, '🧭 Directions'),
         p.website ? h('a', { class: 'btn small', href: p.website, target: '_blank', rel: 'noopener' }, '🌐 Website') : null,
         p.phone ? h('a', { class: 'btn small', href: `tel:${p.phone.replace(/[^\d+]/g, '')}` }, '📞 Call') : null,
       ),
@@ -200,8 +237,17 @@ export async function renderDetail(ctx, id) {
   }
 
   root.append(
+    ...(p.tip ? [h('div', { class: 'notice small' }, '📦 ', p.tip, ' ', h('a', { href: '#/add?tab=barcode' }, 'Scan a barcode ›'))] : []),
     menu?.kind === 'chain'
       ? h('div', { class: 'notice small' }, `✅ Nutrition from the USDA’s lab analysis of ${menu.name} food. Chains change their menus — if your item isn’t here, use Search, Barcode or Custom.`)
+      : menu?.kind === 'campus'
+      ? h(
+          'div',
+          { class: 'notice warn small' },
+          p.tip
+            ? `≈ No package handy? Here are ${p.name}’s usual items with USDA nutrition estimates.`
+            : `≈ ${p.name} doesn’t publish nutrition info. These are dishes from its menu, with USDA nutrition for each kind of dish — pick the closest one and adjust servings.`,
+        )
       : h('div', { class: 'notice warn small' }, `≈ We couldn’t find ${p.name}’s own nutrition info, so here are dishes a ${menu?.name.replace(/^Typical /, '') ?? 'restaurant'} typically serves, with USDA average nutrition. Pick the closest one and adjust servings.`),
     h(
       'button',

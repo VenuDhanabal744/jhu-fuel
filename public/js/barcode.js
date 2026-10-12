@@ -1,8 +1,9 @@
-// Barcodes: decode from a photo on-device (ZXing, WebAssembly), then look the product
-// up in free databases - Open Food Facts first, USDA FoodData Central as a fallback.
+// Barcodes: decode on-device (ZXing, WebAssembly) from a photo or live camera frames, then
+// look the product up in free databases - Open Food Facts first, USDA FoodData Central as
+// a fallback. Also keeps a history of recent scans.
 
 import { cacheGet, cacheSet, getAllByIndex } from './store.js';
-import { cleanNutrients } from './nutrients.js';
+import { cleanNutrients, scaleNutrients } from './nutrients.js';
 import { loadImage, toCanvas } from './image.js';
 
 const ZXING_URL = 'https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.5/dist/es/reader/index.js';
@@ -10,11 +11,21 @@ const FORMATS = ['EAN-13', 'UPC-A', 'UPC-E', 'EAN-8'];
 const DAY = 86_400_000;
 // The USDA's shared demo key works for light personal use (30 lookups/hour per device).
 const FDC_API_KEY = 'DEMO_KEY';
+// Bump when the stored product shape changes so old cached lookups are refetched.
+const CACHE_PREFIX = 'barcode2:';
 
 let zxing = null;
+const loadZxing = async () => (zxing ??= await import(ZXING_URL));
+
+/** Decode one camera frame (ImageData). Fast settings - the scanner calls this several times a second. */
+export async function decodeFrame(imageData, { tryHarder = false } = {}) {
+  await loadZxing();
+  const results = await zxing.readBarcodes(imageData, { formats: FORMATS, tryHarder, maxNumberOfSymbols: 1 });
+  return results.find((r) => r.isValid && /^\d{6,14}$/.test(r.text))?.text ?? null;
+}
 
 export async function decodeBarcode(dataUrl) {
-  zxing ??= await import(ZXING_URL);
+  await loadZxing();
   const img = await loadImage(dataUrl);
   const original = toCanvas(img);
   const enhanced = toCanvas(img, { width: Math.max(1600, img.naturalWidth) });
@@ -60,34 +71,57 @@ const OFF_MAP = {
   mcg_vitamin_d: ['vitamin-d', 1e6],
 };
 
-function fromOpenFoodFacts(p) {
-  const n = p.nutriments ?? {};
-  const hasServing = n['energy-kcal_serving'] != null || n.energy_serving != null;
-  const per100Factor = !hasServing && p.serving_quantity ? +p.serving_quantity / 100 : 1;
-  const suffix = hasServing ? '_serving' : '_100g';
+function offNutrients(n, suffix) {
   const out = {};
   for (const [key, [field, mult]] of Object.entries(OFF_MAP)) {
     const v = n[field + suffix];
-    if (v != null && v !== '') out[key] = +v * mult * per100Factor;
+    if (v != null && v !== '' && Number.isFinite(+v)) out[key] = +v * mult;
   }
   if (out.calories == null) {
     const kj = n[`energy-kj${suffix}`] ?? n[`energy${suffix}`];
-    if (kj != null) out.calories = (+kj / 4.184) * per100Factor;
+    if (kj != null && Number.isFinite(+kj)) out.calories = +kj / 4.184;
   }
-  if (out.calories == null) return null;
+  return out.calories == null ? null : cleanNutrients(out);
+}
+
+const tagNames = (tags = []) => [...new Set(tags.map((t) => t.replace(/^\w\w:/, '').replace(/-/g, ' ').toLowerCase()))].filter(Boolean);
+
+function fromOpenFoodFacts(p) {
+  const n = p.nutriments ?? {};
+  const per100 = offNutrients(n, '_100g');
+  const servingGrams = +p.serving_quantity > 0 ? +p.serving_quantity : null;
+  const perServing = offNutrients(n, '_serving') ?? (per100 && servingGrams ? scaleNutrients(per100, servingGrams / 100) : null);
+  if (!per100 && !perServing) return null;
+  const analysis = p.ingredients_analysis_tags ?? [];
+  const has = (tag) => analysis.includes(`en:${tag}`);
+  const unit = /\d\s*(ml|cl|l)\b/i.test(p.serving_size || p.quantity || '') ? 'ml' : 'g';
   return {
-    name: withBrand(p.product_name, p.brands?.split(',')[0]) || 'Unnamed product',
-    serving: hasServing || per100Factor !== 1 ? p.serving_size || `${p.serving_quantity} g` : '100 g',
-    nutrients: cleanNutrients(out),
+    name: p.product_name?.trim() || 'Unnamed product',
+    brand: p.brands?.split(',')[0]?.trim() || null,
+    serving: perServing ? p.serving_size || `${servingGrams} ${unit}` : `100 ${unit}`,
+    servingGrams: perServing ? servingGrams : 100,
+    packageGrams: +p.product_quantity > 0 ? +p.product_quantity : null,
+    unit,
+    nutrients: perServing ?? per100,
+    per100,
     image: p.image_front_small_url ?? null,
     database: 'Open Food Facts',
+    nutriscore: /^[a-e]$/.test(p.nutriscore_grade ?? '') ? p.nutriscore_grade : null,
+    nova: [1, 2, 3, 4].includes(+p.nova_group) ? +p.nova_group : null,
+    ingredients: (p.ingredients_text_en || p.ingredients_text || '').trim().slice(0, 1200) || null,
+    allergens: tagNames(p.allergens_tags),
+    diet: {
+      vegan: has('vegan') ? true : has('non-vegan') ? false : null,
+      vegetarian: has('vegetarian') ? true : has('non-vegetarian') ? false : null,
+      palmOil: has('palm-oil') ? true : has('palm-oil-free') ? false : null,
+    },
   };
 }
 
 async function openFoodFacts(code) {
   for (const c of variants(code)) {
     const res = await fetch(
-      `https://world.openfoodfacts.org/api/v2/product/${c}.json?fields=product_name,brands,serving_size,serving_quantity,nutriments,image_front_small_url`,
+      `https://world.openfoodfacts.org/api/v2/product/${c}.json?fields=product_name,brands,quantity,product_quantity,serving_size,serving_quantity,serving_quantity_unit,nutriments,image_front_small_url,nutriscore_grade,nova_group,ingredients_text,ingredients_text_en,allergens_tags,ingredients_analysis_tags`,
       { signal: AbortSignal.timeout(12_000) },
     );
     if (!res.ok) continue;
@@ -135,25 +169,40 @@ async function usda(code) {
   const food = (await res.json()).foods?.find((f) => (f.gtinUpc ?? '').replace(/^0+/, '') === bare);
   if (!food) return null;
   // Branded nutrient values are per 100 g/ml; scale to the label serving.
-  const unit = (food.servingSizeUnit ?? '').toLowerCase();
-  const perServing = food.servingSize && /^(g|grm|ml|mlt)$/.test(unit) ? food.servingSize / 100 : 1;
+  const unitCode = (food.servingSizeUnit ?? '').toLowerCase();
+  const unit = unitCode.startsWith('m') ? 'ml' : 'g';
+  const servingGrams = food.servingSize && /^(g|grm|ml|mlt)$/.test(unitCode) ? +food.servingSize : null;
   const out = {};
   for (const n of food.foodNutrients ?? []) {
     const map = FDC_MAP[n.nutrientNumber];
-    if (map && out[map[0]] == null && n.value != null) out[map[0]] = n.value * map[1] * perServing;
+    if (map && out[map[0]] == null && n.value != null) out[map[0]] = n.value * map[1];
   }
   if (out.calories == null) return null;
+  const per100 = cleanNutrients(out);
   const brand = food.brandName || food.brandOwner;
+  // "packageWeight": e.g. "16 oz/454 g"
+  const pkg = /(\d+(?:\.\d+)?)\s*(g|ml)\b/i.exec(food.packageWeight ?? '');
   return {
-    name: withBrand(titleCase(food.description), brand && titleCase(brand)),
-    serving: perServing !== 1 ? food.householdServingFullText || `${food.servingSize} ${unit.startsWith('m') ? 'ml' : 'g'}` : '100 g',
-    nutrients: cleanNutrients(out),
+    name: titleCase(food.description),
+    brand: brand ? titleCase(brand) : null,
+    serving: servingGrams ? food.householdServingFullText || `${servingGrams} ${unit}` : `100 ${unit}`,
+    servingGrams: servingGrams ?? 100,
+    packageGrams: pkg ? +pkg[1] : null,
+    unit,
+    nutrients: servingGrams ? scaleNutrients(per100, servingGrams / 100) : per100,
+    per100,
     image: null,
     database: 'USDA FoodData Central',
+    nutriscore: null,
+    nova: null,
+    ingredients: food.ingredients ? food.ingredients.slice(0, 1200) : null,
+    allergens: [],
+    diet: {},
   };
 }
 
-function withBrand(name, brand) {
+/** "Greek Yogurt — Chobani", unless the name already says the brand. */
+export function withBrand(name, brand) {
   if (!brand || name?.toLowerCase().includes(brand.toLowerCase())) return name;
   return [name, brand].filter(Boolean).join(' — ');
 }
@@ -168,10 +217,14 @@ export async function lookupBarcode(code) {
   if (!/^\d{6,14}$/.test(digits) || digits.replace(/^0+/, '').length < 6) return null;
   for (const v of variants(digits)) {
     const [saved] = (await getAllByIndex('foods', 'barcode', v)).slice(-1);
-    if (saved) return { name: saved.name, serving: saved.serving_desc, nutrients: saved.nutrients, image: null, database: 'My foods', savedId: saved.id };
+    if (saved) {
+      // Your own numbers win, but keep the database's extras (picture, ingredients, Nutri-Score).
+      const extra = (await cacheGet(`${CACHE_PREFIX}${digits.replace(/^0+/, '')}`))?.data ?? {};
+      return { ...extra, name: saved.name, brand: null, serving: saved.serving_desc, servingGrams: null, per100: null, nutrients: saved.nutrients, database: 'My foods', savedId: saved.id };
+    }
   }
 
-  const cacheKey = `barcode:${digits.replace(/^0+/, '')}`;
+  const cacheKey = `${CACHE_PREFIX}${digits.replace(/^0+/, '')}`;
   const hit = await cacheGet(cacheKey);
   if (hit && (hit.data || Date.now() - hit.at < DAY)) return hit.data;
 
@@ -184,4 +237,35 @@ export async function lookupBarcode(code) {
   }
   await cacheSet(cacheKey, product);
   return product;
+}
+
+// ---------- scan history ----------
+
+const HISTORY_KEY = 'barcode-history';
+const HISTORY_MAX = 40;
+
+/** Recent scans, newest first: [{ code, name, brand, image, calories, serving, at }]. */
+export async function scanHistory() {
+  return (await cacheGet(HISTORY_KEY))?.data ?? [];
+}
+
+// UPC-A "016000275287" and EAN-13 "0016000275287" are the same product.
+const sameCode = (a, b) => a.replace(/^0+/, '') === b.replace(/^0+/, '');
+
+export async function recordScan(code, product) {
+  const list = (await scanHistory()).filter((x) => !sameCode(x.code, code));
+  list.unshift({
+    code,
+    name: product?.name ?? null,
+    brand: product?.brand ?? null,
+    image: product?.image ?? null,
+    calories: product?.nutrients?.calories ?? null,
+    serving: product?.serving ?? null,
+    at: Date.now(),
+  });
+  await cacheSet(HISTORY_KEY, list.slice(0, HISTORY_MAX));
+}
+
+export async function forgetScan(code) {
+  await cacheSet(HISTORY_KEY, (await scanHistory()).filter((x) => !sameCode(x.code, code)));
 }

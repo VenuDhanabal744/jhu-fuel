@@ -176,11 +176,12 @@ function softmax(sims) {
 
 function menuEntry(it) {
   return {
-    source: 'menu',
+    source: it.source ?? 'menu',
+    estimated: it.estimated ?? false,
     foodId: it.foodId,
     name: it.name,
     location: it.locationName,
-    station: `${it.menuName} · ${it.station}`,
+    station: it.station === 'Menu' ? it.menuName : `${it.menuName} · ${it.station}`,
     serving: servingText(it.serving),
     nutrients: it.nutrients,
     hasNutrition: it.hasNutrition,
@@ -326,6 +327,33 @@ function lexicalScore(query, name) {
   return 0.7 * Math.min(1, hits / q.size) + 0.3 * (hits / n.length);
 }
 
+const STOP_WORDS = new Set(['and', 'with', 'the', 'some', 'plus', 'also', 'from']);
+const dishWords = (s) =>
+  s
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((w) => w.length > 2 && !STOP_WORDS.has(w))
+    .map((w) => w.replace(/(?<=[^s])s$/, ''));
+
+/**
+ * Split "burger and fries" into two foods, but keep "chicken and waffles" or "mac and cheese"
+ * together when a single menu item's name contains all of those words.
+ */
+function splitFoods(segment, joiners, names) {
+  const lower = names.map((n) => n.toLowerCase());
+  const oneDish = (text) => {
+    const words = dishWords(text);
+    return words.length >= 2 && lower.some((n) => words.every((w) => n.includes(w)));
+  };
+  const out = [];
+  for (const part of segment.split(joiners)) {
+    const prev = out[out.length - 1];
+    if (prev != null && part.trim() && oneDish(`${prev} ${part}`)) out[out.length - 1] = `${prev} and ${part}`;
+    else out.push(part);
+  }
+  return out;
+}
+
 export async function analyzeText({ text, date, meal, location }) {
   let loc = location;
   let body = text;
@@ -343,9 +371,11 @@ export async function analyzeText({ text, date, meal, location }) {
   }
   body = body.replace(/\b(from|at|in) the\b|\b(from|at)\b(?=\s*$)/gi, ' ');
   const { items, names, groups } = await candidateGroups(date, meal, loc);
+  // At a chain, "with" is usually part of an item name ("McFlurry with Oreo"); elsewhere it joins two foods.
+  const joiners = chain ? /\+|&|\band\b|\bplus\b|\balso\b/i : /\+|&|\band\b|\bwith\b|\bplus\b|\balso\b/i;
   const chunks = body
-    // At a chain, "with" is usually part of an item name ("McFlurry with Oreo"); elsewhere it joins two foods.
-    .split(chain ? /,|;|\n|\+|&|\band\b|\bplus\b|\balso\b/i : /,|;|\n|\+|&|\band\b|\bwith\b|\bplus\b|\balso\b/i)
+    .split(/,|;|\n/)
+    .flatMap((segment) => splitFoods(segment, joiners, names))
     .map(parseChunk)
     .filter((c) => c.text.length > 1);
   if (!names.length || !chunks.length) {

@@ -2,7 +2,7 @@
 // open). Menu data: network-first with offline fallback. Pinned CDN libraries: cache-first.
 // The recognition model is cached separately by transformers.js itself.
 
-const APP = 'jhu-fuel-app-v1';
+const APP = 'jhu-fuel-app-v2';
 const DATA = 'jhu-fuel-data-v1';
 const LIBS = 'jhu-fuel-libs-v1';
 

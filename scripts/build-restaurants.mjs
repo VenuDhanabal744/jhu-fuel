@@ -6,6 +6,7 @@
 //                                     chain:<key>   real menu items for chains the USDA analyzed
 //                                                   (SR Legacy "Fast Foods" / "Restaurant Foods")
 //                                     typical:<key> typical dishes for a cuisine (USDA FNDDS)
+//                                     campus:<key>  campus cafés' own dishes (campus-dining.mjs)
 //
 // Usage: node scripts/build-restaurants.mjs
 
@@ -15,6 +16,7 @@ import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { TEMPLATES, CUISINE_TO_TEMPLATE } from './restaurant-templates.mjs';
+import { CAMPUS_VENUES, SHARED_MENUS } from './campus-dining.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = path.join(ROOT, 'public', 'restaurants');
@@ -192,35 +194,84 @@ function buildChains(srFoods) {
 
 // ---------- typical cuisine menus (FNDDS) ----------
 
-function buildTemplates(fnddsFoods) {
+function addNutrients(a, b) {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = Math.round(((out[k] ?? 0) + v) * 10) / 10;
+  return out;
+}
+
+/**
+ * Turn a dish line ([name, FNDDS description or [[description, grams], …], portion, label, count])
+ * into a menu item. Returns a string describing the problem if a food or portion is missing.
+ */
+function buildDish(byName, [name, desc, portionMatch, servingLabel, count = 1]) {
+  if (Array.isArray(desc)) {
+    let nutrients = {};
+    let grams = 0;
+    for (const [part, g] of desc) {
+      const food = byName.get(part);
+      if (!food) return `${name}: ${part}`;
+      nutrients = addNutrients(nutrients, scale(per100(food), g));
+      grams += g;
+    }
+    return { name, serving: `${servingLabel ?? '1 serving'} (${Math.round(grams)} g)`, nutrients };
+  }
+  const food = byName.get(desc);
+  if (!food) return desc;
+  if (typeof portionMatch === 'number') {
+    const grams = portionMatch * count;
+    return { name, serving: `${servingLabel ?? '1 serving'} (${Math.round(grams)} g)`, nutrients: scale(per100(food), grams) };
+  }
+  const portions = (food.foodPortions ?? []).filter((p) => p.gramWeight > 0);
+  const portion =
+    (portionMatch && portions.find((p) => p.portionDescription?.toLowerCase().includes(portionMatch.toLowerCase()))) ??
+    portions.find((p) => /^1 (regular|small\/regular|sandwich|item|piece|cone|doughnut|serving)/i.test(p.portionDescription ?? '')) ??
+    portions.find((p) => p.portionDescription === 'Quantity not specified') ??
+    portions[0];
+  if (!portion) return `${desc} (no portion)`;
+  const grams = portion.gramWeight * count;
+  const label = servingLabel ?? (portion.portionDescription === 'Quantity not specified' ? 'typical serving' : portion.portionDescription);
+  return { name, serving: `${label} (${Math.round(grams)} g)`, nutrients: scale(per100(food), grams) };
+}
+
+/** Build a list of dish lines; a string in the list starts a new section. */
+function buildDishes(byName, dishes, missing, key) {
+  const items = [];
+  let section = null;
+  for (const dish of dishes) {
+    if (typeof dish === 'string') {
+      section = dish;
+      continue;
+    }
+    const item = buildDish(byName, dish);
+    if (typeof item === 'string') missing.push(`${key}: ${item}`);
+    else items.push(section ? { ...item, section } : item);
+  }
+  return items;
+}
+
+function buildTemplates(fnddsFoods, missing) {
   const byName = new Map(fnddsFoods.map((f) => [f.description, f]));
   const menus = {};
-  const missing = [];
   for (const [key, t] of Object.entries(TEMPLATES)) {
-    const items = [];
-    for (const [name, desc, portionMatch, servingLabel, count = 1] of t.dishes) {
-      const food = byName.get(desc);
-      if (!food) {
-        missing.push(`${key}: ${desc}`);
-        continue;
-      }
-      const portions = (food.foodPortions ?? []).filter((p) => p.gramWeight > 0);
-      const portion =
-        (portionMatch && portions.find((p) => p.portionDescription?.toLowerCase().includes(portionMatch.toLowerCase()))) ??
-        portions.find((p) => /^1 (regular|small\/regular|sandwich|item|piece|cone|doughnut|serving)/i.test(p.portionDescription ?? '')) ??
-        portions.find((p) => p.portionDescription === 'Quantity not specified') ??
-        portions[0];
-      if (!portion) {
-        missing.push(`${key}: ${desc} (no portion)`);
-        continue;
-      }
-      const grams = portion.gramWeight * count;
-      const label = servingLabel ?? (portion.portionDescription === 'Quantity not specified' ? 'typical serving' : portion.portionDescription);
-      items.push({ name, serving: `${label} (${Math.round(grams)} g)`, nutrients: scale(per100(food), grams) });
-    }
+    const items = buildDishes(byName, t.dishes, missing, key);
     menus[`typical:${key}`] = { name: `Typical ${t.label}`, kind: 'typical', source: 'USDA averages for these dishes — not this restaurant’s own recipes', items };
   }
-  if (missing.length) console.warn(`  ! ${missing.length} template dishes not found in FNDDS:\n    ${missing.join('\n    ')}`);
+  return menus;
+}
+
+// ---------- campus cafés (hand-made menus, FNDDS nutrition) ----------
+
+function buildCampusMenus(fnddsFoods, missing) {
+  const byName = new Map(fnddsFoods.map((f) => [f.description, f]));
+  const menus = {};
+  const source = 'Dishes from this place’s menu, with USDA nutrition for each kind of dish (it doesn’t publish its own)';
+  for (const [key, m] of Object.entries(SHARED_MENUS)) {
+    menus[`campus:${key}`] = { name: m.name, kind: 'campus', source, items: buildDishes(byName, m.dishes, missing, key) };
+  }
+  for (const v of CAMPUS_VENUES) {
+    if (v.dishes) menus[`campus:${v.id}`] = { name: v.name, kind: 'campus', source, items: buildDishes(byName, v.dishes, missing, v.id) };
+  }
   return menus;
 }
 
@@ -252,6 +303,51 @@ function haversineMiles(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+// Off-campus places of a campus vendor's brand, e.g. Kitsch at R. House -> the Kitsch menu.
+const VENDOR_MATCH = [
+  ...Object.entries(SHARED_MENUS).filter(([, m]) => m.match).map(([key, m]) => [m.match, `campus:${key}`, m.cat]),
+  ...CAMPUS_VENUES.filter((v) => v.match).map((v) => [v.match, `campus:${v.id}`, v.cat]),
+];
+
+function editDistance(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++)
+    for (let j = 1; j <= b.length; j++) d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+
+function campusPlaces() {
+  return CAMPUS_VENUES.map((v) => ({
+    id: `campus-${v.id}`,
+    name: v.name,
+    kind: 'campus',
+    cuisine: [],
+    brand: null,
+    lat: v.lat,
+    lon: v.lon,
+    dist: +haversineMiles(CAMPUS, v).toFixed(2),
+    address: v.address,
+    hours: v.hours,
+    website: v.website ?? null,
+    phone: null,
+    menu: `campus:${v.menu ?? v.id}`,
+    cat: v.cat,
+    campus: true,
+    building: v.building,
+    about: v.about,
+    ...(v.tip ? { tip: v.tip } : null),
+    ...(v.approx ? { approx: true } : null),
+    ...(v.aliases ? { aliases: v.aliases } : null),
+  }));
+}
+
+/** OSM sometimes maps a campus café too (often with a typo); the hand-made entry replaces it. */
+function isCampusDuplicate(p, campus) {
+  const n = norm(p.name);
+  return campus.some((c) => haversineMiles(c, p) < 0.3 && [c.name, ...(c.aliases ?? [])].some((name) => editDistance(norm(name), n) <= 2));
+}
+
 const DEFAULT_TEMPLATE = { cafe: 'coffee', ice_cream: 'ice_cream', fast_food: 'burger', restaurant: 'american', food_court: 'american' };
 
 function buildPlaces(elements, menus) {
@@ -267,7 +363,8 @@ function buildPlaces(elements, menus) {
     const chain = CHAIN_MATCH.find(([prefix]) => brandKey.startsWith(prefix));
     // JHU's own dining locations also appear on the map - point them at the real JHU menus.
     const isJhuDining = /levering|nolan'?s on 33rd|hopkins caf[eé]|fresh food caf[eé]/i.test(t.name) && haversineMiles(CAMPUS, { lat, lon }) < 0.6;
-    let menu = isJhuDining ? 'jhu' : chain && menus[`chain:${chain[1]}`] ? `chain:${chain[1]}` : null;
+    const vendor = !isJhuDining && !chain && VENDOR_MATCH.find(([re]) => re.test(t.name));
+    let menu = isJhuDining ? 'jhu' : chain && menus[`chain:${chain[1]}`] ? `chain:${chain[1]}` : vendor ? vendor[1] : null;
     if (!menu) {
       const tpl = cuisines.map((c) => CUISINE_TO_TEMPLATE[c]).find(Boolean) ?? DEFAULT_TEMPLATE[t.amenity] ?? 'american';
       menu = `typical:${tpl}`;
@@ -287,7 +384,8 @@ function buildPlaces(elements, menus) {
       website: t.website ?? t['contact:website'] ?? null,
       phone: t.phone ?? t['contact:phone'] ?? null,
       menu,
-      cat: menu === 'jhu' ? 'jhu' : menu.startsWith('chain:') ? CHAIN_CATEGORY[menu.slice(6)] : menu.slice(8),
+      cat: menu === 'jhu' ? 'jhu' : menu.startsWith('chain:') ? CHAIN_CATEGORY[menu.slice(6)] : vendor ? vendor[2] : menu.slice(8),
+      ...(isJhuDining ? { campus: true } : null),
     });
   }
   // OSM sometimes has the same place as a node and a building outline; keep the first.
@@ -307,13 +405,18 @@ function buildPlaces(elements, menus) {
 async function main() {
   console.log('Downloading USDA nutrition data…');
   const [srFoods, fnddsFoods] = await Promise.all([loadFdc(SR_ZIP), loadFdc(FNDDS_ZIP)]);
-  const menus = { ...buildChains(srFoods), ...buildTemplates(fnddsFoods) };
+  const missing = [];
+  const menus = { ...buildChains(srFoods), ...buildTemplates(fnddsFoods, missing), ...buildCampusMenus(fnddsFoods, missing) };
+  if (missing.length) console.warn(`  ! ${missing.length} dishes not found in FNDDS:\n    ${missing.join('\n    ')}`);
 
   console.log('Downloading restaurants from OpenStreetMap…');
   const elements = await overpass(
     `[out:json][timeout:150];nwr["amenity"~"^(restaurant|fast_food|cafe|food_court|ice_cream)$"](around:${RADIUS_M},${CAMPUS.lat},${CAMPUS.lon});out center tags;`,
   );
-  const places = buildPlaces(elements, menus);
+  const campus = campusPlaces();
+  const osm = buildPlaces(elements, menus);
+  if (osm.length < 500) throw new Error(`Only ${osm.length} places found — refusing to overwrite the existing data.`);
+  const places = [...campus, ...osm.filter((p) => !isCampusDuplicate(p, campus))].sort((a, b) => a.dist - b.dist);
   if (places.length < 500) throw new Error(`Only ${places.length} places found — refusing to overwrite the existing data.`);
 
   // Only ship menus some place uses.
@@ -325,7 +428,7 @@ async function main() {
   fs.writeFileSync(path.join(OUT, 'menus.json'), JSON.stringify(shipped));
   const chains = places.filter((p) => p.menu.startsWith('chain:')).length;
   console.log(
-    `Wrote ${places.length} places (${chains} with real chain menus) and ${Object.keys(shipped).length} menus ` +
+    `Wrote ${places.length} places (${campus.length} campus cafés, ${chains} with real chain menus) and ${Object.keys(shipped).length} menus ` +
       `(${Object.values(shipped).reduce((n, m) => n + m.items.length, 0)} dishes).`,
   );
 }

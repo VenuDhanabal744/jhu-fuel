@@ -55,7 +55,11 @@ async function renderJhu(ctx) {
   const { state } = ctx;
   const index = await api(`/menus?date=${state.date}`);
   const root = h('div');
-  root.append(h('h1', { class: 'page-title' }, `JHU Dining · ${fmtDate(state.date, 'relative')}`));
+  root.append(
+    h('h1', { class: 'page-title' }, `JHU Dining · ${fmtDate(state.date, 'relative')}`),
+    // Cafés that aren't on Nutrislice (Bloomberg Student Center, Brody…) live with the restaurants.
+    h('a', { class: 'campus-link', href: '#/menus?mode=restaurants&cat=campus' }, h('span', { class: 'grow' }, '🎓 Student Center & campus cafés'), h('span', { 'aria-hidden': 'true' }, '›')),
+  );
 
   if (!index.length) {
     root.append(h('div', { class: 'empty' }, h('span', { class: 'ico' }, '🍽'), 'No menus published for this day yet. Menus usually appear a week or two ahead.'));

@@ -5,7 +5,13 @@ An iPhone app (installable web app) that knows what the JHU dining halls are ser
 ## Features
 
 - **📷 Snap your plate.** An image-recognition model (CLIP), running on your phone, compares your photo with every item on that day's menu at Hopkins Café (formerly the FFC), Nolan's on 33rd, Levering Kitchens, Levering Café or Peabody. It checks different parts of the photo, so several foods on one plate are found. You confirm or swap matches, tap anything it missed, set servings, and log.
-- **📦 Barcode scanning.** Photograph a barcode, or type its number, to look up the product's nutrition in Open Food Facts, with the USDA database as a fallback. If a product isn't in either, scan its label instead and it's remembered under that barcode.
+- **📦 Barcode scanning.** Point the camera at a barcode and it's read live, with no photo to take. You can also photograph it or type its number. Nutrition comes from Open Food Facts, with the USDA database as a fallback. Each product shows:
+  - portions by serving, 100 g, the whole package or any amount;
+  - Nutri-Score, processing level (NOVA), allergens and ingredients;
+  - how that portion fits your remaining calories and limits today.
+
+  **Scan several items** fills a basket you log in one tap. **Compare** puts products side by side. **Recent scans** reopens anything you've scanned. If a product is missing or wrong, scan its label or fix the numbers; your version is remembered under that barcode.
+- **🎓 Campus cafés.** The places Nutrislice doesn't cover: the Bloomberg Student Center (Koshary, Connie's, Lucky Danger, Bento Sushi, Kitsch, Any Day Now, Mo's Place), Brody Café, Daily Grind in Mudd Hall, Kitschenette, Niecy's Juice Bar, Insomnia Cookies, Charles Street Market and Peabody's Maestro's Café. Each has its own dishes with USDA nutrition estimates, since none publish nutrition. Find them from JHU Dining › "Student Center & campus cafés", snap your plate there, or type "chicken and waffles from Connie's".
 - **🏷️ Nutrition label scanning.** Photograph a Nutrition Facts panel and on-device text recognition reads all the values into a form you can check. It straightens tilted photos and fixes common misreads.
 - **🍽 Restaurants within 10 miles.** About 2,200 restaurants, cafés and ice-cream shops around Homewood (from OpenStreetMap), searchable and filterable by cuisine, sorted by distance from campus or from you, with directions, hours and websites. About 20 chains (McDonald's, Subway, Chick-fil-A, Domino's, Taco Bell…) have their **real menu items** with nutrition from the USDA's lab analysis. Every other place gets a **typical menu** for its cuisine, made of USDA average nutrition for common dishes and clearly labelled as an estimate. You can snap your plate at a restaurant, and a typed meal like "big mac and fries from mcdonalds" finds the nearest one.
 - **🏛 Live JHU menus.** Every location and meal period, with full nutrition, diet labels and allergens. They are refreshed every morning.
@@ -27,7 +33,7 @@ GitHub Actions (every morning, free)            Your iPhone (Safari / home-scree
 - JHU's menu server doesn't let other websites read it from the browser, so a free daily GitHub Actions job downloads 4 weeks of menus (2 back, 2 ahead) and publishes them as static files next to the app.
 - The same job also turns every dish name into numbers the recognition model can compare against (CLIP embeddings), so your phone only needs the image half of the model: a one-time download of about 90 MB, cached afterwards.
 - A photo takes about 1–3 seconds and works offline after the first use.
-- **Restaurants:** a weekly job asks OpenStreetMap for every restaurant, fast-food place, café and ice-cream shop within 10 miles of Homewood, and pulls nutrition from two free USDA datasets: *SR Legacy* (lab analyses of chain menu items) and *FNDDS* (typical dishes with standard serving sizes). Chain locations get their chain's menu. Everyone else gets a typical menu for their OpenStreetMap cuisine tag. Very few independent restaurants publish nutrition facts, so the app shows estimates there rather than invent numbers. The result is committed to `public/restaurants/`.
+- **Restaurants:** a weekly job asks OpenStreetMap for every restaurant, fast-food place, café and ice-cream shop within 10 miles of Homewood, and pulls nutrition from two free USDA datasets: *SR Legacy* (lab analyses of chain menu items) and *FNDDS* (typical dishes with standard serving sizes). Chain locations get their chain's menu. Everyone else gets a typical menu for their OpenStreetMap cuisine tag. Very few independent restaurants publish nutrition facts, so the app shows estimates there rather than invent numbers. Campus cafés come from a hand-made list (`scripts/campus-dining.mjs`) of each vendor's actual dishes, matched to USDA foods. Update it when vendors change. The result is committed to `public/restaurants/`.
 
 | Piece | File |
 |---|---|
@@ -36,10 +42,11 @@ GitHub Actions (every morning, free)            Your iPhone (Safari / home-scree
 | Storage (IndexedDB) | `public/js/store.js` |
 | Menus (reads the published files) | `public/js/menus.js` |
 | Plate recognition + typed-meal matching | `public/js/recognize.js` |
-| Barcodes / labels | `public/js/barcode.js`, `public/js/label.js` |
+| Barcodes / labels | `public/js/barcode.js`, `public/js/scanner.js` (live camera), `public/js/views/barcode.js`, `public/js/label.js` |
 | Offline support | `public/sw.js`, `public/manifest.webmanifest` |
 | Daily menu + embedding build, deploy | `scripts/`, `.github/workflows/deploy.yml` |
 | Restaurants + their menus (weekly) | `scripts/build-restaurants.mjs`, `scripts/restaurant-templates.mjs`, `.github/workflows/restaurants.yml` |
+| Campus cafés' menus (edit by hand) | `scripts/campus-dining.mjs` |
 
 ## Run it on your computer
 

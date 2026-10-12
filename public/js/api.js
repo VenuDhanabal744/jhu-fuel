@@ -165,6 +165,15 @@ async function addFood({ name, serving, nutrients, barcode }) {
   return { ...food, id };
 }
 
+// ---------- barcodes ----------
+
+async function barcodeLookup(code) {
+  const { lookupBarcode, recordScan } = await import('./barcode.js');
+  const product = await lookupBarcode(code);
+  await recordScan(code, product);
+  return { code, product };
+}
+
 // ---------- progress ----------
 
 async function summary(from, to) {
@@ -266,7 +275,7 @@ const routes = [
   }],
   ['POST', /^\/analyze$/, (_m, _q, body) => analyze(body ?? {})],
   ['GET', /^\/restaurants$/, () => menus.getPlaces()],
-  ['GET', /^\/restaurants\/([nwr]\d+)$/, async ([, id]) => {
+  ['GET', /^\/restaurants\/([nwr]\d+|campus-[a-z-]+)$/, async ([, id]) => {
     const place = (await menus.getPlace(id)) ?? fail('Restaurant not found');
     const menu = (await menus.getRestaurantMenus())[place.menu] ?? null;
     return { place, menu: menu && { name: menu.name, kind: menu.kind, source: menu.source }, items: await menus.restaurantItems(id) };
@@ -281,13 +290,15 @@ const routes = [
   ['DELETE', /^\/foods\/(\d+)$/, async ([, id]) => (await store.del('foods', +id), { ok: true })],
   ['GET', /^\/summary$/, (_m, q) => summary(requireDate(q.get('from'), 'from'), requireDate(q.get('to'), 'to'))],
   ['POST', /^\/barcode$/, async (_m, _q, body) => {
-    const { decodeBarcode, lookupBarcode } = await import('./barcode.js');
+    const { decodeBarcode } = await import('./barcode.js');
     const code = (await decodeBarcode(body?.image)) ?? fail('No barcode found. Get closer so the barcode fills most of the photo, with good light and no glare.');
-    return { code, product: await lookupBarcode(code) };
+    return barcodeLookup(code);
   }],
-  ['GET', /^\/barcode\/(\d{6,14})$/, async ([, code]) => {
-    const { lookupBarcode } = await import('./barcode.js');
-    return { code, product: await lookupBarcode(code) };
+  ['GET', /^\/barcode\/(\d{6,14})$/, async ([, code]) => barcodeLookup(code)],
+  ['GET', /^\/barcode-history$/, async () => (await import('./barcode.js')).scanHistory()],
+  ['DELETE', /^\/barcode-history\/(\d{6,14})$/, async ([, code]) => {
+    await (await import('./barcode.js')).forgetScan(code);
+    return { ok: true };
   }],
   ['POST', /^\/label$/, async (_m, _q, body) => (await import('./label.js')).scanLabel(body?.image)],
   ['GET', /^\/backup$/, () => exportBackup()],
